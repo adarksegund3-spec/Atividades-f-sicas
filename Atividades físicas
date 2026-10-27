@@ -5,6 +5,8 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 
 local MIN_DELAY = 0.6
+local T0 = os.clock()
+local FULL_H = 196
 
 local NAVY_1     = Color3.fromRGB(6, 12, 32)
 local NAVY_2     = Color3.fromRGB(12, 30, 80)
@@ -18,7 +20,8 @@ local WHITE      = Color3.fromRGB(240, 246, 255)
 local MUTED      = Color3.fromRGB(140, 170, 225)
 local FIELD      = Color3.fromRGB(10, 22, 58)
 
-local mode = {target = "tap", exact = true, enabled = false, delay = MIN_DELAY}
+local mode = {target = "tap", exact = true, enabled = false, delay = MIN_DELAY, limit = nil}
+local count = 0
 
 local env = (getgenv and getgenv()) or _G
 
@@ -75,7 +78,7 @@ end
 local gui = make("ScreenGui", {Name = "AtividadesFisicasGui", ResetOnSpawn = false}, parentGui)
 
 local frame = make("Frame", {
-    Size = UDim2.new(0, 300, 0, 168), Position = UDim2.new(0.5, -150, 0.5, -84),
+    Size = UDim2.new(0, 300, 0, FULL_H), Position = UDim2.new(0.5, -150, 0.5, -FULL_H / 2),
     BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Active = true,
     ClipsDescendants = true,
 }, gui)
@@ -174,6 +177,20 @@ local speedBox = make("TextBox", {
 corner(speedBox, 6)
 make("UIStroke", {Color = BLUE_DEEP, Thickness = 1.2}, speedBox)
 
+local qtyLabel = make("TextLabel", {
+    Position = UDim2.new(0, 12, 0, 159), Size = UDim2.new(0, 80, 0, 26), BackgroundTransparency = 1,
+    Text = "Quantidade:", TextColor3 = ICE, Font = Enum.Font.Gotham, TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, frame)
+local qtyBox = make("TextBox", {
+    Position = UDim2.new(1, -82, 0, 160), Size = UDim2.new(0, 70, 0, 24), BackgroundColor3 = FIELD,
+    Text = "", PlaceholderText = "infinito", PlaceholderColor3 = MUTED,
+    TextColor3 = WHITE, Font = Enum.Font.Gotham, TextSize = 12,
+    ClearTextOnFocus = false, BorderSizePixel = 0,
+}, frame)
+corner(qtyBox, 6)
+make("UIStroke", {Color = BLUE_DEEP, Thickness = 1.2}, qtyBox)
+
 local shimmer = make("Frame", {
     Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1),
     BorderSizePixel = 0, ZIndex = 20, Active = false,
@@ -232,8 +249,10 @@ local accents = {
 
 local function norm(s)
     s = tostring(s or "")
-    for _, p in ipairs(accents) do
-        s = string.gsub(s, p[1], p[2])
+    if string.find(s, "[\128-\255]") then
+        for _, p in ipairs(accents) do
+            s = string.gsub(s, p[1], p[2])
+        end
     end
     s = string.lower(s)
     s = string.gsub(s, "[%s%p]", "")
@@ -310,9 +329,60 @@ local function clickButton(btn)
     end)
 end
 
+-- ===================== CONTADOR DA CABECA =====================
+-- Le o numero que aparece em Character.Head.Overhead.AtividadeFisica.Container.Value
+-- (o mesmo para polichinelos, flexoes e abdominais: o titulo muda, o Value e o contador)
+
+local headObj = nil
+local ready = true
+
+local function findHeadLabel()
+    if headObj and headObj.Parent then return headObj end
+    headObj = nil
+    local ch = player.Character
+    if not ch then return nil end
+    local af = ch:FindFirstChild("AtividadeFisica", true)
+    if not af then return nil end
+    local cont = af:FindFirstChild("Container") or af
+    local v = cont:FindFirstChild("Value", true)
+    if v and (v:IsA("TextLabel") or v:IsA("TextBox") or v:IsA("TextButton")) then
+        headObj = v
+    end
+    return headObj
+end
+
+local function parseNumber(text)
+    local t = string.gsub(tostring(text or ""), "<[^>]->", "")
+    local tok = string.match(t, "%d[%d%.,]*")
+    if not tok then return nil end
+    return tonumber((string.gsub(tok, "[%.,]", "")))
+end
+
+local function readHead()
+    local o = findHeadLabel()
+    if not o then return nil end
+    local n = parseNumber(o.Text)
+    -- a quantidade maxima do script e 500; valores gigantes sao total acumulado/antigo, nao a sessao
+    if n and n > 5000 then return nil end
+    return n
+end
+
+local function beginRun()
+    count = 0
+end
+
+-- progresso = numero REAL mostrado na cabeca (conta tambem os feitos manualmente).
+-- So usa os cliques do script se o contador da cabeca nao existir.
+local function progress()
+    local v = readHead()
+    if v then return v, true end
+    return count, false
+end
+
 local function refresh()
     if mode.enabled then
-        toggle.Text = "PARAR"
+        local p = progress()
+        toggle.Text = mode.limit and ("PARAR  " .. p .. "/" .. mode.limit) or "PARAR"
         toggleGrad.Color = ON_SEQ
         toggleStroke.Color = ICE
     else
@@ -320,11 +390,27 @@ local function refresh()
         toggleGrad.Color = OFF_SEQ
         toggleStroke.Color = BLUE_LIGHT
     end
-    speedBox.Text = tostring(mode.delay)
+    if not speedBox:IsFocused() then
+        speedBox.Text = tostring(mode.delay)
+    end
 end
 
 toggle.MouseButton1Click:Connect(function()
     mode.enabled = not mode.enabled
+    if mode.enabled then beginRun() end
+    refresh()
+end)
+
+qtyBox.FocusLost:Connect(function()
+    local n = tonumber(qtyBox.Text)
+    if n then
+        n = math.clamp(math.floor(n), 1, 500)
+        mode.limit = n
+        qtyBox.Text = tostring(n)
+    else
+        mode.limit = nil
+        qtyBox.Text = ""
+    end
     refresh()
 end)
 
@@ -334,6 +420,8 @@ speedBox.FocusLost:Connect(function()
     mode.delay = n
     speedBox.Text = tostring(n)
 end)
+
+-- ===================== CONTROLE / LOOPS =====================
 
 local running = true
 
@@ -349,7 +437,7 @@ env.__AtividadesFisicasStop = stopAll
 close.MouseButton1Click:Connect(stopAll)
 
 local minimized = false
-local body = {descLabel, toggleBg, delayLabel, speedBox}
+local body = {descLabel, toggleBg, delayLabel, speedBox, qtyLabel, qtyBox}
 
 minBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
@@ -366,19 +454,63 @@ minBtn.MouseButton1Click:Connect(function()
         minBtn.Text = "−"
         for _, o in ipairs(body) do o.Visible = true end
         TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {Size = UDim2.new(0, 300, 0, 168)}):Play()
+            {Size = UDim2.new(0, 300, 0, FULL_H)}):Play()
     end
 end)
+
+local function pathGet(root, names)
+    local cur = root
+    for _, n in ipairs(names) do
+        if not cur then return nil end
+        cur = cur:FindFirstChild(n)
+    end
+    return cur
+end
+
+local function finishRun()
+    mode.enabled = false
+    refresh()
+    task.spawn(function()
+        task.wait(0.4)
+        local pg = player:FindFirstChild("PlayerGui")
+        local pause = pg and pathGet(pg, {"AtividadesFisicas", "Main", "Background", "Infos", "Pause"})
+        if not (pause and pause:IsA("GuiButton")) then
+            pause = findButton({target = "pausar", exact = false})
+        end
+        if pause then
+            clickButton(pause)
+            task.wait(0.5)
+        end
+        local closeBtn = pg and pathGet(pg, {"AtividadesFisicas", "Main", "Background", "Close"})
+        if closeBtn and closeBtn:IsA("GuiButton") then
+            clickButton(closeBtn)
+        end
+    end)
+end
 
 task.spawn(function()
     while running do
         task.wait(mode.delay)
         if running and mode.enabled then
-            local btn = findButton(mode)
-            if btn then
-                clickButton(btn)
+            local p = progress()
+            if mode.limit and p >= mode.limit then
+                finishRun()
+            else
+                local btn = findButton(mode)
+                if btn then
+                    clickButton(btn)
+                    count = count + 1
+                end
+                refresh()
             end
         end
+    end
+end)
+
+task.spawn(function()
+    while running do
+        task.wait(1)
+        if running then refresh() end
     end
 end)
 
