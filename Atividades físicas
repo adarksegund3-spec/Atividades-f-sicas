@@ -1,0 +1,385 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+
+local MIN_DELAY = 0.6
+
+local NAVY_1     = Color3.fromRGB(6, 12, 32)
+local NAVY_2     = Color3.fromRGB(12, 30, 80)
+local NAVY_3     = Color3.fromRGB(8, 20, 56)
+local BLUE_DEEP  = Color3.fromRGB(29, 78, 216)
+local BLUE       = Color3.fromRGB(37, 99, 235)
+local BLUE_LIGHT = Color3.fromRGB(96, 165, 250)
+local SKY        = Color3.fromRGB(56, 189, 248)
+local ICE        = Color3.fromRGB(191, 219, 254)
+local WHITE      = Color3.fromRGB(240, 246, 255)
+local MUTED      = Color3.fromRGB(140, 170, 225)
+local FIELD      = Color3.fromRGB(10, 22, 58)
+
+local mode = {target = "tap", exact = true, enabled = false, delay = MIN_DELAY}
+
+local env = (getgenv and getgenv()) or _G
+
+if env.__AtividadesFisicasStop then
+    pcall(env.__AtividadesFisicasStop)
+    env.__AtividadesFisicasStop = nil
+end
+
+local function getParent()
+    local ok, g = pcall(function()
+        return (gethui and gethui()) or game:GetService("CoreGui")
+    end)
+    if ok and g then return g end
+    return player:WaitForChild("PlayerGui")
+end
+
+local parentGui = getParent()
+pcall(function()
+    for _, n in ipairs({"LarpJJsGui", "AtividadesFisicasGui"}) do
+        local old = parentGui:FindFirstChild(n)
+        if old then old:Destroy() end
+    end
+end)
+
+local function make(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do obj[k] = v end
+    obj.Parent = parent
+    return obj
+end
+
+local function corner(obj, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r)
+    c.Parent = obj
+end
+
+local function seq(colors)
+    local keys = {}
+    for i, c in ipairs(colors) do
+        keys[i] = ColorSequenceKeypoint.new((i - 1) / (#colors - 1), c)
+    end
+    return ColorSequence.new(keys)
+end
+
+local function grad(obj, colors, rot)
+    local g = Instance.new("UIGradient")
+    g.Color = seq(colors)
+    g.Rotation = rot or 0
+    g.Parent = obj
+    return g
+end
+
+local gui = make("ScreenGui", {Name = "AtividadesFisicasGui", ResetOnSpawn = false}, parentGui)
+
+local frame = make("Frame", {
+    Size = UDim2.new(0, 300, 0, 168), Position = UDim2.new(0.5, -150, 0.5, -84),
+    BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Active = true,
+    ClipsDescendants = true,
+}, gui)
+corner(frame, 12)
+grad(frame, {NAVY_1, NAVY_2, NAVY_3}, 135)
+
+local frameStroke = make("UIStroke", {Color = Color3.new(1, 1, 1), Thickness = 1.5}, frame)
+grad(frameStroke, {BLUE_LIGHT, BLUE_DEEP, SKY}, 45)
+
+local top = make("Frame", {
+    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+}, frame)
+corner(top, 12)
+grad(top, {BLUE_DEEP, BLUE, BLUE_DEEP}, 0)
+local topFill = make("Frame", {
+    Position = UDim2.new(0, 0, 1, -10), Size = UDim2.new(1, 0, 0, 10),
+    BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+}, top)
+grad(topFill, {BLUE_DEEP, BLUE, BLUE_DEEP}, 0)
+local topLine = make("Frame", {
+    Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1),
+    BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+}, top)
+grad(topLine, {SKY, ICE, SKY}, 0)
+
+make("TextLabel", {
+    BackgroundTransparency = 1, Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -76, 1, -1),
+    RichText = true,
+    Text = 'Atividades físicas  <font size="8" color="rgb(170,200,245)">by: angel &amp; astroxz</font>',
+    TextColor3 = WHITE, Font = Enum.Font.GothamBold, TextSize = 13,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, top)
+
+local minBtn = make("TextButton", {
+    Position = UDim2.new(1, -58, 0, 6), Size = UDim2.new(0, 22, 0, 22), BackgroundColor3 = NAVY_2,
+    BackgroundTransparency = 0.35,
+    Text = "−", TextColor3 = WHITE, Font = Enum.Font.GothamBold, TextSize = 16,
+    BorderSizePixel = 0, AutoButtonColor = false,
+}, top)
+corner(minBtn, 6)
+minBtn.MouseEnter:Connect(function()
+    TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0}):Play()
+end)
+minBtn.MouseLeave:Connect(function()
+    TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.35}):Play()
+end)
+
+local close = make("TextButton", {
+    Position = UDim2.new(1, -30, 0, 6), Size = UDim2.new(0, 22, 0, 22), BackgroundColor3 = NAVY_2,
+    BackgroundTransparency = 0.35,
+    Text = "×", TextColor3 = WHITE, Font = Enum.Font.GothamBold, TextSize = 16,
+    BorderSizePixel = 0, AutoButtonColor = false,
+}, top)
+corner(close, 6)
+close.MouseEnter:Connect(function()
+    TweenService:Create(close, TweenInfo.new(0.15), {BackgroundTransparency = 0}):Play()
+end)
+close.MouseLeave:Connect(function()
+    TweenService:Create(close, TweenInfo.new(0.15), {BackgroundTransparency = 0.35}):Play()
+end)
+
+local descLabel = make("TextLabel", {
+    Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 40), BackgroundTransparency = 1,
+    Text = "Compatível com polichinelos, flexões e abdominais. Toque em Iniciar e abra o exercício que desejar: o resto é automático.",
+    TextColor3 = MUTED, Font = Enum.Font.Gotham, TextSize = 11,
+    TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+}, frame)
+
+local ON_SEQ  = seq({SKY, BLUE, SKY})
+local OFF_SEQ = seq({BLUE_DEEP, BLUE, BLUE_DEEP})
+
+local toggleBg = make("Frame", {
+    Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(1, -24, 0, 32),
+    BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+}, frame)
+corner(toggleBg, 8)
+local toggleGrad = grad(toggleBg, {BLUE_DEEP, BLUE, BLUE_DEEP}, 0)
+local toggleStroke = make("UIStroke", {Color = BLUE_LIGHT, Thickness = 1.2}, toggleBg)
+
+local toggle = make("TextButton", {
+    Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    Text = "INICIAR", TextColor3 = WHITE, Font = Enum.Font.GothamBold, TextSize = 13,
+    BorderSizePixel = 0, AutoButtonColor = false,
+}, toggleBg)
+
+local delayLabel = make("TextLabel", {
+    Position = UDim2.new(0, 12, 0, 129), Size = UDim2.new(0, 80, 0, 26), BackgroundTransparency = 1,
+    Text = "Delay (s):", TextColor3 = ICE, Font = Enum.Font.Gotham, TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, frame)
+local speedBox = make("TextBox", {
+    Position = UDim2.new(1, -82, 0, 130), Size = UDim2.new(0, 70, 0, 24), BackgroundColor3 = FIELD,
+    Text = tostring(MIN_DELAY), TextColor3 = WHITE, Font = Enum.Font.Gotham, TextSize = 12,
+    ClearTextOnFocus = false, BorderSizePixel = 0,
+}, frame)
+corner(speedBox, 6)
+make("UIStroke", {Color = BLUE_DEEP, Thickness = 1.2}, speedBox)
+
+local shimmer = make("Frame", {
+    Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0, ZIndex = 20, Active = false,
+}, frame)
+corner(shimmer, 12)
+local shimmerGrad = Instance.new("UIGradient")
+shimmerGrad.Rotation = 20
+shimmerGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 1),
+    NumberSequenceKeypoint.new(0.40, 1),
+    NumberSequenceKeypoint.new(0.50, 0.91),
+    NumberSequenceKeypoint.new(0.60, 1),
+    NumberSequenceKeypoint.new(1, 1),
+})
+shimmerGrad.Offset = Vector2.new(-1, 0)
+shimmerGrad.Parent = shimmer
+local shimmerTween = TweenService:Create(
+    shimmerGrad,
+    TweenInfo.new(2.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 1.4),
+    {Offset = Vector2.new(1, 0)}
+)
+shimmerTween:Play()
+
+local connections = {}
+do
+    local dragging, dragStart, startPos
+    table.insert(connections, top.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end))
+    table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                       startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end))
+end
+
+local accents = {
+    {"ã", "a"}, {"á", "a"}, {"à", "a"}, {"â", "a"}, {"Ã", "a"}, {"Á", "a"}, {"À", "a"}, {"Â", "a"},
+    {"é", "e"}, {"ê", "e"}, {"É", "e"}, {"Ê", "e"},
+    {"í", "i"}, {"Í", "i"},
+    {"ó", "o"}, {"ô", "o"}, {"õ", "o"}, {"Ó", "o"}, {"Ô", "o"}, {"Õ", "o"},
+    {"ú", "u"}, {"Ú", "u"},
+    {"ç", "c"}, {"Ç", "c"},
+}
+
+local function norm(s)
+    s = tostring(s or "")
+    for _, p in ipairs(accents) do
+        s = string.gsub(s, p[1], p[2])
+    end
+    s = string.lower(s)
+    s = string.gsub(s, "[%s%p]", "")
+    return s
+end
+
+local function isVisible(obj)
+    if obj.AbsoluteSize.X <= 0 or obj.AbsoluteSize.Y <= 0 then return false end
+    local cur = obj
+    while cur and cur ~= game do
+        if cur:IsA("GuiObject") and not cur.Visible then return false end
+        if cur:IsA("ScreenGui") and not cur.Enabled then return false end
+        cur = cur.Parent
+    end
+    return true
+end
+
+local function findButton(m)
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local target = norm(m.target)
+    if target == "" then return nil end
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if (obj:IsA("TextButton") or obj:IsA("TextLabel")) and not obj:IsDescendantOf(gui) then
+            local txt = norm(obj.Text)
+            local match
+            if m.exact then
+                match = (txt == target)
+            else
+                match = (txt ~= "" and string.find(txt, target, 1, true) ~= nil)
+            end
+            if match then
+                local btn = obj
+                if not obj:IsA("TextButton") then
+                    btn = obj:FindFirstAncestorWhichIsA("GuiButton")
+                end
+                if btn and isVisible(btn) then
+                    return btn
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function clickButton(btn)
+    local done = false
+    if getconnections then
+        for _, ev in ipairs({btn.MouseButton1Click, btn.Activated, btn.MouseButton1Down, btn.MouseButton1Up}) do
+            pcall(function()
+                for _, c in ipairs(getconnections(ev)) do
+                    c:Fire()
+                    done = true
+                end
+            end)
+        end
+    end
+    if done then return end
+
+    if firesignal then
+        local ok = pcall(function()
+            firesignal(btn.MouseButton1Click)
+            firesignal(btn.Activated)
+        end)
+        if ok then return end
+    end
+
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        local inset = GuiService:GetGuiInset()
+        local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + inset
+        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+    end)
+end
+
+local function refresh()
+    if mode.enabled then
+        toggle.Text = "PARAR"
+        toggleGrad.Color = ON_SEQ
+        toggleStroke.Color = ICE
+    else
+        toggle.Text = "INICIAR"
+        toggleGrad.Color = OFF_SEQ
+        toggleStroke.Color = BLUE_LIGHT
+    end
+    speedBox.Text = tostring(mode.delay)
+end
+
+toggle.MouseButton1Click:Connect(function()
+    mode.enabled = not mode.enabled
+    refresh()
+end)
+
+speedBox.FocusLost:Connect(function()
+    local n = tonumber((string.gsub(speedBox.Text, ",", ".")))
+    if not n or n < MIN_DELAY then n = MIN_DELAY end
+    mode.delay = n
+    speedBox.Text = tostring(n)
+end)
+
+local running = true
+
+local function stopAll()
+    running = false
+    mode.enabled = false
+    pcall(function() shimmerTween:Cancel() end)
+    for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+    pcall(function() gui:Destroy() end)
+end
+
+env.__AtividadesFisicasStop = stopAll
+close.MouseButton1Click:Connect(stopAll)
+
+local minimized = false
+local body = {descLabel, toggleBg, delayLabel, speedBox}
+
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    if minimized then
+        minBtn.Text = "+"
+        TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0, 300, 0, 34)}):Play()
+        task.delay(0.2, function()
+            if minimized then
+                for _, o in ipairs(body) do o.Visible = false end
+            end
+        end)
+    else
+        minBtn.Text = "−"
+        for _, o in ipairs(body) do o.Visible = true end
+        TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0, 300, 0, 168)}):Play()
+    end
+end)
+
+task.spawn(function()
+    while running do
+        task.wait(mode.delay)
+        if running and mode.enabled then
+            local btn = findButton(mode)
+            if btn then
+                clickButton(btn)
+            end
+        end
+    end
+end)
+
+refresh()
