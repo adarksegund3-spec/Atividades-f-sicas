@@ -18,7 +18,7 @@ local IS_PC = (not IS_MOBILE) and (not IS_CONSOLE)
 
 local MIN_DELAY = 0.6      -- valor mostrado: mínimo
 local DEFAULT_DELAY = 0.6  -- valor mostrado: padrão ao abrir
-local SPEED_OFFSET = 0.18  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
+local SPEED_OFFSET = 0.15  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
 local SHOW_STATUS = true   -- linha de diagnostico no rodape (false = esconde e volta ao tamanho antigo)
 local FULL_H = SHOW_STATUS and 222 or 196
 
@@ -615,6 +615,19 @@ local chain = {
         GuiService.SelectedObject = old
     end},
 }
+-- PC: SIMULAR input real (mouse/clique) vem primeiro; copiar os eventos do botao fica de reserva
+do
+    local order = {"Mouse virtual", "Mouse virtual alt", "Mouse executor", "Eventos",
+                   "Input falso", "VirtualUser", "Controle/Enter"}
+    local byName = {}
+    for _, m in ipairs(chain) do byName[m[1]] = m end
+    local newChain = {}
+    for _, n in ipairs(order) do
+        if byName[n] then table.insert(newChain, byName[n]) end
+    end
+    chain = newChain
+end
+
 -- no console o metodo de controle vem logo depois dos eventos
 if IS_CONSOLE then
     table.insert(chain, 2, table.remove(chain, #chain))
@@ -686,6 +699,8 @@ end
 
 local lastWorked = nil
 local lastMode = "tap"
+local noBubbleSince = nil
+local dumped = false
 local keyIdx = 1
 local keyFails = 0
 local lastClick = 0
@@ -800,6 +815,8 @@ toggle.MouseButton1Click:Connect(function()
     mode.enabled = not mode.enabled
     awaiting = nil
     lastClick = 0
+    noBubbleSince = nil
+    dumped = false
     if mode.enabled then beginRun() end
     refresh()
 end)
@@ -895,6 +912,65 @@ end
 -- cada ciclo roda numa thread separada (nao trava o loop nem o jogo)
 local lastRefresh = 0
 
+-- Se no PC nao achar bolha nenhuma por 4s, copia um relatorio pra area de transferencia
+-- (e imprime no console F9) pra colar no chat e eu ver o que o jogo mostra de verdade.
+local function dumpDiagnostic()
+    local U = UserInputService
+    local lines = {}
+    table.insert(lines, "== Atividades fisicas: diagnostico ==")
+    table.insert(lines, "plataforma: " .. (IS_MOBILE and "MOBILE" or (IS_CONSOLE and "CONSOLE" or "PC"))
+        .. " | touch=" .. tostring(U.TouchEnabled) .. " teclado=" .. tostring(U.KeyboardEnabled)
+        .. " mouse=" .. tostring(U.MouseEnabled) .. " gamepad=" .. tostring(U.GamepadEnabled))
+    table.insert(lines, "executor: getconnections=" .. tostring(getconnections ~= nil)
+        .. " firesignal=" .. tostring(firesignal ~= nil)
+        .. " mouse1click=" .. tostring(mouse1click ~= nil)
+        .. " keypress=" .. tostring(keypress ~= nil)
+        .. " setclipboard=" .. tostring(setclipboard ~= nil))
+    table.insert(lines, "contador da cabeca achado: " .. tostring(findHeadLabel() ~= nil))
+    local guis = {}
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        for _, g in ipairs(pg:GetChildren()) do
+            if g:IsA("ScreenGui") and g ~= gui then
+                table.insert(guis, g.Name .. (g.Enabled and "" or "(off)"))
+            end
+        end
+        table.insert(lines, "ScreenGuis: " .. table.concat(guis, ", "))
+        local n = 0
+        for i, obj in ipairs(pg:GetDescendants()) do
+            if i % 250 == 0 then task.wait() end
+            if n >= 80 then break end
+            if (obj:IsA("TextButton") or obj:IsA("TextLabel")) and not obj:IsDescendantOf(gui) then
+                local txt = tostring(obj.Text)
+                if txt ~= "" and #txt <= 24 and isVisible(obj) then
+                    n = n + 1
+                    local path = string.gsub(obj:GetFullName(), "^.-PlayerGui%.", "")
+                    table.insert(lines, obj.ClassName .. " | " .. path .. " | '" .. txt .. "'")
+                end
+            end
+        end
+    end
+    local text = table.concat(lines, "\n")
+    print(text)
+    local copied = false
+    pcall(function()
+        if setclipboard then
+            setclipboard(text)
+            copied = true
+        elseif toclipboard then
+            toclipboard(text)
+            copied = true
+        end
+    end)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Atividades físicas",
+            Text = copied and "Não achei a bolha. Diagnóstico copiado: cole no chat." or "Não achei a bolha. Veja o console (F9).",
+            Duration = 8,
+        })
+    end)
+end
+
 local function cycle()
     local now = os.clock()
 
@@ -927,7 +1003,18 @@ local function cycle()
     if not btn and IS_PC then
         keyBtn, key = getKeyBubble()
     end
+    if not (btn or (keyBtn and key)) then
+        if (not IS_MOBILE) and not dumped then
+            if not noBubbleSince then
+                noBubbleSince = now
+            elseif now - noBubbleSince > 4 then
+                dumped = true
+                task.spawn(dumpDiagnostic)
+            end
+        end
+    end
     if btn or (keyBtn and key) then
+        noBubbleSince = nil
         local headBefore = readHead()
         local t0 = os.clock()
         if btn then
