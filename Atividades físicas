@@ -4,8 +4,9 @@ local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 
-local MIN_DELAY = 0.6
-local T0 = os.clock()
+local MIN_DELAY = 0.6      -- valor mostrado: mínimo
+local DEFAULT_DELAY = 0.6  -- valor mostrado: padrão ao abrir
+local SPEED_OFFSET = 0.20  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
 local FULL_H = 196
 
 local NAVY_1     = Color3.fromRGB(6, 12, 32)
@@ -20,7 +21,7 @@ local WHITE      = Color3.fromRGB(240, 246, 255)
 local MUTED      = Color3.fromRGB(140, 170, 225)
 local FIELD      = Color3.fromRGB(10, 22, 58)
 
-local mode = {target = "tap", exact = true, enabled = false, delay = MIN_DELAY, limit = nil}
+local mode = {target = "tap", exact = true, enabled = false, delay = DEFAULT_DELAY, limit = nil}
 local count = 0
 
 local env = (getgenv and getgenv()) or _G
@@ -75,7 +76,11 @@ local function grad(obj, colors, rot)
     return g
 end
 
-local gui = make("ScreenGui", {Name = "AtividadesFisicasGui", ResetOnSpawn = false}, parentGui)
+local gui = make("ScreenGui", {Name = "AtividadesFisicasGui", ResetOnSpawn = false}, nil)
+pcall(function()
+    if syn and syn.protect_gui then syn.protect_gui(gui) end
+end)
+gui.Parent = parentGui
 
 local frame = make("Frame", {
     Size = UDim2.new(0, 300, 0, FULL_H), Position = UDim2.new(0.5, -150, 0.5, -FULL_H / 2),
@@ -171,7 +176,7 @@ local delayLabel = make("TextLabel", {
 }, frame)
 local speedBox = make("TextBox", {
     Position = UDim2.new(1, -82, 0, 130), Size = UDim2.new(0, 70, 0, 24), BackgroundColor3 = FIELD,
-    Text = tostring(MIN_DELAY), TextColor3 = WHITE, Font = Enum.Font.Gotham, TextSize = 12,
+    Text = tostring(DEFAULT_DELAY), TextColor3 = WHITE, Font = Enum.Font.Gotham, TextSize = 12,
     ClearTextOnFocus = false, BorderSizePixel = 0,
 }, frame)
 corner(speedBox, 6)
@@ -214,6 +219,8 @@ local shimmerTween = TweenService:Create(
 )
 shimmerTween:Play()
 
+-- ===================== ARRASTAR (PC / MOBILE) =====================
+
 local connections = {}
 do
     local dragging, dragStart, startPos
@@ -238,6 +245,8 @@ do
     end))
 end
 
+-- ===================== BUSCA DO BOTAO (COM CACHE, SEM LAG) =====================
+
 local accents = {
     {"ã", "a"}, {"á", "a"}, {"à", "a"}, {"â", "a"}, {"Ã", "a"}, {"Á", "a"}, {"À", "a"}, {"Â", "a"},
     {"é", "e"}, {"ê", "e"}, {"É", "e"}, {"Ê", "e"},
@@ -247,8 +256,14 @@ local accents = {
     {"ç", "c"}, {"Ç", "c"},
 }
 
+local normCache = {}
+local normCacheSize = 0
+
 local function norm(s)
     s = tostring(s or "")
+    local cached = normCache[s]
+    if cached ~= nil then return cached end
+    local raw = s
     if string.find(s, "[\128-\255]") then
         for _, p in ipairs(accents) do
             s = string.gsub(s, p[1], p[2])
@@ -256,6 +271,12 @@ local function norm(s)
     end
     s = string.lower(s)
     s = string.gsub(s, "[%s%p]", "")
+    if normCacheSize > 2000 then
+        normCache = {}
+        normCacheSize = 0
+    end
+    normCache[raw] = s
+    normCacheSize = normCacheSize + 1
     return s
 end
 
@@ -270,13 +291,16 @@ local function isVisible(obj)
     return true
 end
 
+-- varre o PlayerGui devagar (cede o frame a cada X objetos) para nao travar o jogo
 local function findButton(m)
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return nil end
     local target = norm(m.target)
     if target == "" then return nil end
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if (obj:IsA("TextButton") or obj:IsA("TextLabel")) and not obj:IsDescendantOf(gui) then
+    local list = pg:GetDescendants()
+    for i, obj in ipairs(list) do
+        if i % 250 == 0 then task.wait() end
+        if obj.Parent and (obj:IsA("TextButton") or obj:IsA("TextLabel")) and not obj:IsDescendantOf(gui) then
             local txt = norm(obj.Text)
             local match
             if m.exact then
@@ -286,7 +310,7 @@ local function findButton(m)
             end
             if match then
                 local btn = obj
-                if not obj:IsA("TextButton") then
+                if not obj:IsA("GuiButton") then
                     btn = obj:FindFirstAncestorWhichIsA("GuiButton")
                 end
                 if btn and isVisible(btn) then
@@ -298,43 +322,76 @@ local function findButton(m)
     return nil
 end
 
-local function clickButton(btn)
-    local done = false
+local cachedBtn = nil
+local lastScan = 0
+
+local function getButton()
+    local now = os.clock()
+    if cachedBtn and cachedBtn.Parent then
+        -- botao ainda existe: so olha se esta visivel (barato, roda a cada tick)
+        if isVisible(cachedBtn) then return cachedBtn end
+        -- escondido: de vez em quando procura outro (caso a bolha tenha sido recriada)
+        if now - lastScan < 0.5 then return nil end
+    else
+        cachedBtn = nil
+        if now - lastScan < 0.12 then return nil end
+    end
+    lastScan = now
+    local found = findButton(mode)
+    if found then cachedBtn = found end
+    return found
+end
+
+-- ===================== CLIQUE (UM METODO SO) =====================
+-- Dispara direto os eventos do botao (getconnections; se nao existir, firesignal).
+-- NAO move mouse, NAO manda tecla, NAO manda toque: assim o jogo nao troca para "modo PC"
+-- e a bolha continua aparecendo no mobile. Funciona igual no PC.
+-- Mouse virtual so entra como ULTIMO recurso e SOMENTE em PC puro (sem touch).
+
+local IS_TOUCH = UserInputService.TouchEnabled
+local IS_PC = UserInputService.KeyboardEnabled and UserInputService.MouseEnabled and not IS_TOUCH
+
+local function fireEvents(btn)
+    local fired = false
     if getconnections then
         for _, ev in ipairs({btn.MouseButton1Click, btn.Activated, btn.MouseButton1Down, btn.MouseButton1Up}) do
             pcall(function()
                 for _, c in ipairs(getconnections(ev)) do
                     c:Fire()
-                    done = true
+                    fired = true
                 end
             end)
         end
     end
-    if done then return end
+    if fired then return true end
 
     if firesignal then
         local ok = pcall(function()
             firesignal(btn.MouseButton1Click)
             firesignal(btn.Activated)
         end)
-        if ok then return end
+        if ok then return true end
     end
+    return false
+end
 
-    pcall(function()
-        local vim = game:GetService("VirtualInputManager")
-        local inset = GuiService:GetGuiInset()
-        local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + inset
-        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
-        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
-    end)
+local function clickButton(btn)
+    if fireEvents(btn) then return end
+    if IS_PC then
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            local inset = GuiService:GetGuiInset()
+            local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + inset
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+        end)
+    end
 end
 
 -- ===================== CONTADOR DA CABECA =====================
 -- Le o numero que aparece em Character.Head.Overhead.AtividadeFisica.Container.Value
--- (o mesmo para polichinelos, flexoes e abdominais: o titulo muda, o Value e o contador)
 
 local headObj = nil
-local ready = true
 
 local function findHeadLabel()
     if headObj and headObj.Parent then return headObj end
@@ -362,7 +419,6 @@ local function readHead()
     local o = findHeadLabel()
     if not o then return nil end
     local n = parseNumber(o.Text)
-    -- a quantidade maxima do script e 500; valores gigantes sao total acumulado/antigo, nao a sessao
     if n and n > 5000 then return nil end
     return n
 end
@@ -371,18 +427,41 @@ local function beginRun()
     count = 0
 end
 
--- progresso = numero REAL mostrado na cabeca (conta tambem os feitos manualmente).
--- So usa os cliques do script se o contador da cabeca nao existir.
 local function progress()
     local v = readHead()
     if v then return v, true end
     return count, false
 end
 
+-- ===================== CLIQUE DO CICLO =====================
+-- Sem esperas nem verificacoes: clica e pronto (e o mais rapido e leve possivel).
+
+local lastWorked = nil
+local lastClick = 0
+local awaiting = nil -- clique feito, esperando o contador da cabeca atualizar
+
+local function clickSmart(btn)
+    clickButton(btn)
+    count = count + 1
+end
+
+-- usado pra pausar/fechar
+local function clickAll(btn)
+    clickButton(btn)
+end
+
+-- ===================== INTERFACE =====================
+
 local function refresh()
     if mode.enabled then
         local p = progress()
-        toggle.Text = mode.limit and ("PARAR  " .. p .. "/" .. mode.limit) or "PARAR"
+        local tag = ""
+        if type(lastWorked) == "number" then
+            tag = "  ·  M" .. lastWorked
+        elseif lastWorked == "todos" then
+            tag = "  ·  M*"
+        end
+        toggle.Text = (mode.limit and ("PARAR  " .. p .. "/" .. mode.limit) or "PARAR") .. tag
         toggleGrad.Color = ON_SEQ
         toggleStroke.Color = ICE
     else
@@ -397,6 +476,8 @@ end
 
 toggle.MouseButton1Click:Connect(function()
     mode.enabled = not mode.enabled
+    awaiting = nil
+    lastClick = 0
     if mode.enabled then beginRun() end
     refresh()
 end)
@@ -478,31 +559,67 @@ local function finishRun()
             pause = findButton({target = "pausar", exact = false})
         end
         if pause then
-            clickButton(pause)
+            clickAll(pause)
             task.wait(0.5)
         end
         local closeBtn = pg and pathGet(pg, {"AtividadesFisicas", "Main", "Background", "Close"})
         if closeBtn and closeBtn:IsA("GuiButton") then
-            clickButton(closeBtn)
+            clickAll(closeBtn)
         end
     end)
 end
 
+-- cada ciclo roda numa thread separada (nao trava o loop nem o jogo)
+local lastRefresh = 0
+
+local function cycle()
+    local now = os.clock()
+
+    -- 1) depois de um clique com limite, espera o contador da cabeca mostrar o novo valor
+    --    (assim nunca passa da quantidade escolhida)
+    if awaiting then
+        local h = readHead()
+        if h ~= nil and h ~= awaiting.head then
+            awaiting = nil
+        elseif now - awaiting.t > 1.0 then
+            awaiting = nil
+        else
+            return
+        end
+    end
+
+    -- 2) chegou na quantidade? para ANTES de clicar de novo
+    local p = progress()
+    if mode.limit and p >= mode.limit then
+        finishRun()
+        return
+    end
+
+    -- 3) respeita o intervalo entre cliques (velocidade real = delay mostrado - SPEED_OFFSET)
+    if now - lastClick < (mode.delay - SPEED_OFFSET) then return end
+
+    -- 4) bolha visivel? clica na hora
+    local btn = getButton()
+    if btn then
+        local headBefore = readHead()
+        clickSmart(btn)
+        lastClick = os.clock()
+        if mode.limit and headBefore ~= nil then
+            awaiting = {head = headBefore, t = lastClick}
+        end
+        if lastClick - lastRefresh > 0.25 then
+            lastRefresh = lastClick
+            refresh()
+        end
+    end
+end
+
+-- verifica a bolha varias vezes por segundo (reage rapido), mas so clica no ritmo do delay
 task.spawn(function()
     while running do
-        task.wait(mode.delay)
+        task.wait(0.03)
         if running and mode.enabled then
-            local p = progress()
-            if mode.limit and p >= mode.limit then
-                finishRun()
-            else
-                local btn = findButton(mode)
-                if btn then
-                    clickButton(btn)
-                    count = count + 1
-                end
-                refresh()
-            end
+            pcall(cycle)
         end
     end
 end)
