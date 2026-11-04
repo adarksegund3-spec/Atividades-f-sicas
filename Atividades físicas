@@ -18,8 +18,9 @@ local IS_PC = (not IS_MOBILE) and (not IS_CONSOLE)
 
 local MIN_DELAY = 0.6      -- valor mostrado: mínimo
 local DEFAULT_DELAY = 0.6  -- valor mostrado: padrão ao abrir
-local SPEED_OFFSET = 0.15  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
-local FULL_H = 196
+local SPEED_OFFSET = 0.18  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
+local SHOW_STATUS = true   -- linha de diagnostico no rodape (false = esconde e volta ao tamanho antigo)
+local FULL_H = SHOW_STATUS and 222 or 196
 
 local NAVY_1     = Color3.fromRGB(6, 12, 32)
 local NAVY_2     = Color3.fromRGB(12, 30, 80)
@@ -33,7 +34,11 @@ local WHITE      = Color3.fromRGB(240, 246, 255)
 local MUTED      = Color3.fromRGB(140, 170, 225)
 local FIELD      = Color3.fromRGB(10, 22, 58)
 
-local mode = {target = "tap", exact = true, enabled = false, delay = DEFAULT_DELAY, limit = nil}
+-- no PC aceita tambem outros textos comuns de bolha; no mobile fica so "tap" (como era)
+local mode = {
+    target = "tap", targets = IS_PC and {"tap", "toque", "clique", "click"} or {"tap"},
+    exact = true, enabled = false, delay = DEFAULT_DELAY, limit = nil,
+}
 local count = 0
 
 local env = (getgenv and getgenv()) or _G
@@ -189,7 +194,7 @@ end)
 
 local descLabel = make("TextLabel", {
     Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 40), BackgroundTransparency = 1,
-    Text = "Compatível com polichinelos, flexões e abdominais. Toque em Iniciar e abra o exercício que desejar: o resto é automático.",
+    Text = "Compatível com qual quer tipo de atividades físicas. Toque em Iniciar e abra o exercício que desejar: o resto é automático.",
     TextColor3 = MUTED, Font = Enum.Font.Gotham, TextSize = 11,
     TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
 }, frame)
@@ -237,6 +242,13 @@ local qtyBox = make("TextBox", {
 }, frame)
 corner(qtyBox, 6)
 make("UIStroke", {Color = BLUE_DEEP, Thickness = 1.2}, qtyBox)
+
+local statusLabel = make("TextLabel", {
+    Position = UDim2.new(0, 12, 0, 190), Size = UDim2.new(1, -24, 0, 26), BackgroundTransparency = 1,
+    Text = "", TextColor3 = MUTED, TextTransparency = 0.25, Font = Enum.Font.Gotham, TextSize = 9,
+    TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    Visible = SHOW_STATUS,
+}, frame)
 
 local shimmer = make("Frame", {
     Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1),
@@ -385,7 +397,13 @@ local function findButton(m)
             local txt = norm(obj.Text)
             local match
             if m.exact then
-                match = (txt == target)
+                if m.targets then
+                    for _, t in ipairs(m.targets) do
+                        if txt == t then match = true break end
+                    end
+                else
+                    match = (txt == target)
+                end
             else
                 match = (txt ~= "" and string.find(txt, target, 1, true) ~= nil)
             end
@@ -393,6 +411,8 @@ local function findButton(m)
                 local btn = obj
                 if not obj:IsA("GuiButton") then
                     btn = obj:FindFirstAncestorWhichIsA("GuiButton")
+                    -- PC: se a bolha nao e botao (o jogo pode ler o mouse direto), usa o proprio texto
+                    if not btn and IS_PC then btn = obj end
                 end
                 if btn and isVisible(btn) then
                     return btn
@@ -423,13 +443,93 @@ local function getButton()
     return found
 end
 
+-- ===================== BOLHA DE TECLA (PC) =====================
+-- No PC o jogo mostra uma letra (Q, E...) na bolha em vez de "tap": e pra APERTAR A TECLA.
+-- (mesmo metodo do script DRIP MENU AUTO JJs: acha o botao com a letra e manda a tecla)
+
+local function keyFromText(t)
+    t = string.upper((string.gsub(tostring(t or ""), "%s+", "")))
+    if #t == 1 and string.match(t, "%a") and t ~= "X" then
+        local ok, kc = pcall(function() return Enum.KeyCode[t] end)
+        if ok then return kc end
+    end
+    return nil
+end
+
+local SKIP_NAMES = {Close = true, Pause = true, Minimize = true}
+
+local function findKeyBubble()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local roots = {}
+    local pol = pg:FindFirstChild("Polichinelos")
+    if pol then table.insert(roots, pol:FindFirstChild("Screen") or pol) end
+    local af = pg:FindFirstChild("AtividadesFisicas")
+    if af then table.insert(roots, af) end
+    for _, root in ipairs(roots) do
+        for i, obj in ipairs(root:GetDescendants()) do
+            if i % 250 == 0 then task.wait() end
+            if obj.Parent and (obj:IsA("TextLabel") or obj:IsA("TextButton")) and keyFromText(obj.Text) then
+                local btn = obj:IsA("GuiButton") and obj or obj:FindFirstAncestorWhichIsA("GuiButton")
+                if btn and not SKIP_NAMES[btn.Name] and not btn:FindFirstAncestor("Infos")
+                and not btn:GetAttribute("Completed") and isVisible(btn) then
+                    return btn, obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local cachedKeyBtn, cachedKeyLabel = nil, nil
+local lastKeyScan = 0
+
+local function getKeyBubble()
+    if cachedKeyBtn and cachedKeyBtn.Parent and cachedKeyLabel and cachedKeyLabel.Parent
+    and isVisible(cachedKeyBtn) then
+        local k = keyFromText(cachedKeyLabel.Text)
+        if k then return cachedKeyBtn, k end
+    end
+    local now = os.clock()
+    if now - lastKeyScan < 0.12 then return nil end
+    lastKeyScan = now
+    local btn, lbl = findKeyBubble()
+    if btn then
+        cachedKeyBtn, cachedKeyLabel = btn, lbl
+        return btn, keyFromText(lbl.Text)
+    end
+    cachedKeyBtn, cachedKeyLabel = nil, nil
+    return nil
+end
+
 -- ===================== CLIQUE =====================
 -- MOBILE: um metodo so (dispara os eventos do botao via getconnections/firesignal). Nao move
 -- mouse, nao manda tecla nem toque, entao o jogo nao troca pra "modo PC" e a bolha nao some.
 -- PC / CONSOLE: cadeia de metodos. Usa o que funciona e, se o contador da cabeca nao subir,
 -- passa pro proximo metodo (sem nunca disparar dois metodos no mesmo clique).
 
+-- inset: se a ScreenGui do botao ignora o inset, nao soma (senao o clique erra ~36px)
+local function insetFor(btn)
+    local sg = btn:FindFirstAncestorWhichIsA("ScreenGui")
+    if sg and sg.IgnoreGuiInset then return Vector2.new(0, 0) end
+    return GuiService:GetGuiInset()
+end
+
+local function centerOf(btn, flip)
+    local p = btn.AbsolutePosition + btn.AbsoluteSize / 2
+    local inset = insetFor(btn)
+    if flip then
+        if inset.X == 0 and inset.Y == 0 then
+            inset = GuiService:GetGuiInset()
+        else
+            inset = Vector2.new(0, 0)
+        end
+    end
+    return p + inset
+end
+
 local function fireEvents(btn)
+    if not btn:IsA("GuiButton") then return false end
     local fired = false
     if getconnections then
         for _, ev in ipairs({btn.MouseButton1Click, btn.Activated, btn.MouseButton1Down, btn.MouseButton1Up}) do
@@ -453,11 +553,12 @@ local function fireEvents(btn)
     return false
 end
 
-local function vimClick(btn)
+local function vimClick(btn, flip)
     local vim = game:GetService("VirtualInputManager")
-    local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+    local pos = centerOf(btn, flip)
     vim:SendMouseMoveEvent(pos.X, pos.Y, game)
     vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+    task.wait(0.03)
     vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
 end
 
@@ -465,23 +566,41 @@ end
 local function clickButton(btn)
     if fireEvents(btn) then return end
     if IS_PC then
-        pcall(vimClick, btn)
+        pcall(vimClick, btn, false)
     end
 end
 
 local chain = {
     {"Eventos", function(btn) fireEvents(btn) end},
-    {"Mouse virtual", function(btn) vimClick(btn) end},
+    {"Input falso", function(btn)
+        -- jogos que leem InputBegan/InputEnded do botao em vez de Click
+        if not getconnections then return end
+        local c0 = btn.AbsolutePosition + btn.AbsoluteSize / 2
+        local function fake(state)
+            return {
+                UserInputType = Enum.UserInputType.MouseButton1, UserInputState = state,
+                Position = Vector3.new(c0.X, c0.Y, 0), KeyCode = Enum.KeyCode.Unknown,
+            }
+        end
+        for _, c in ipairs(getconnections(btn.InputBegan)) do
+            pcall(function() c:Fire(fake(Enum.UserInputState.Begin)) end)
+        end
+        for _, c in ipairs(getconnections(btn.InputEnded)) do
+            pcall(function() c:Fire(fake(Enum.UserInputState.End)) end)
+        end
+    end},
+    {"Mouse virtual", function(btn) vimClick(btn, false) end},
+    {"Mouse virtual alt", function(btn) vimClick(btn, true) end},
     {"Mouse executor", function(btn)
         if mouse1click and mousemoveabs then
-            local p = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+            local p = centerOf(btn, false)
             mousemoveabs(p.X, p.Y)
             mouse1click()
         end
     end},
     {"VirtualUser", function(btn)
         local vu = game:GetService("VirtualUser")
-        local p = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+        local p = centerOf(btn, false)
         vu:CaptureController()
         vu:ClickButton1(Vector2.new(p.X, p.Y))
     end},
@@ -500,6 +619,23 @@ local chain = {
 if IS_CONSOLE then
     table.insert(chain, 2, table.remove(chain, #chain))
 end
+
+local keyChain = {
+    {"Tecla virtual", function(key)
+        local vim = game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, key, false, game)
+        task.wait(0.02)
+        vim:SendKeyEvent(false, key, false, game)
+    end},
+    {"Tecla executor", function(key)
+        if keypress and keyrelease then
+            local code = string.byte(key.Name)
+            keypress(code)
+            task.wait(0.02)
+            keyrelease(code)
+        end
+    end},
+}
 
 -- ===================== CONTADOR DA CABECA =====================
 -- Le o numero que aparece em Character.Head.Overhead.AtividadeFisica.Container.Value
@@ -549,6 +685,9 @@ end
 -- ===================== CLIQUE DO CICLO =====================
 
 local lastWorked = nil
+local lastMode = "tap"
+local keyIdx = 1
+local keyFails = 0
 local lastClick = 0
 local awaiting = nil -- clique feito, esperando o contador da cabeca atualizar
 local chainIdx = 1
@@ -571,7 +710,7 @@ local function clickSmart(btn)
 
     -- confere se o contador subiu; se falhar 2 vezes seguidas, troca de metodo
     local t = 0
-    while t < 0.4 do
+    while t < 0.3 do
         task.wait(0.05)
         t = t + 0.05
         local now = readHead()
@@ -587,6 +726,30 @@ local function clickSmart(btn)
     end
 end
 
+-- PC: aperta a tecla da bolha (Q/E...). Mesma logica: se o contador nao subir 2x seguidas, troca de metodo.
+local function pressSmart(key)
+    count = count + 1
+    local before = readHead()
+    pcall(keyChain[keyIdx][2], key)
+    lastWorked = keyIdx
+    if before == nil then return end
+    local t = 0
+    while t < 0.3 do
+        task.wait(0.05)
+        t = t + 0.05
+        local now = readHead()
+        if now ~= nil and now ~= before then
+            keyFails = 0
+            return
+        end
+    end
+    keyFails = keyFails + 1
+    if keyFails >= 2 then
+        keyFails = 0
+        keyIdx = keyIdx % #keyChain + 1
+    end
+end
+
 -- usado pra pausar/fechar
 local function clickAll(btn)
     clickButton(btn)
@@ -594,14 +757,31 @@ end
 
 -- ===================== INTERFACE =====================
 
+local function statusText()
+    local plat = IS_MOBILE and "MOBILE" or (IS_CONSOLE and "CONSOLE" or "PC")
+    local function yn(v) return v and "OK" or "NAO" end
+    local bolha = (cachedBtn ~= nil and cachedBtn.Parent ~= nil)
+    if not bolha and cachedKeyLabel ~= nil and cachedKeyLabel.Parent ~= nil then
+        bolha = true
+    end
+    local cont = (findHeadLabel() ~= nil)
+    local met = "evento"
+    if not IS_MOBILE then
+        met = (lastMode == "tecla") and keyChain[keyIdx][1] or chain[chainIdx][1]
+    end
+    return plat .. " | getconn " .. yn(getconnections) .. " | firesig " .. yn(firesignal)
+        .. " | bolha " .. yn(bolha) .. " | contador " .. yn(cont) .. " | " .. met
+end
+
 local function refresh()
+    if SHOW_STATUS then
+        pcall(function() statusLabel.Text = statusText() end)
+    end
     if mode.enabled then
         local p = progress()
         local tag = ""
         if type(lastWorked) == "number" then
             tag = "  ·  M" .. lastWorked
-        elseif lastWorked == "todos" then
-            tag = "  ·  M*"
         end
         toggle.Text = (mode.limit and ("PARAR  " .. p .. "/" .. mode.limit) or "PARAR") .. tag
         toggleGrad.Color = ON_SEQ
@@ -661,6 +841,7 @@ close.MouseButton1Click:Connect(stopAll)
 
 local minimized = false
 local body = {descLabel, toggleBg, delayLabel, speedBox, qtyLabel, qtyBox}
+if SHOW_STATUS then table.insert(body, statusLabel) end
 
 minBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
@@ -740,12 +921,22 @@ local function cycle()
     -- 3) respeita o intervalo entre cliques (velocidade real = delay mostrado - SPEED_OFFSET)
     if now - lastClick < (mode.delay - SPEED_OFFSET) then return end
 
-    -- 4) bolha visivel? clica na hora
+    -- 4) bolha visivel? clica na hora (PC: se nao ha "tap", procura bolha de tecla Q/E)
     local btn = getButton()
-    if btn then
+    local keyBtn, key
+    if not btn and IS_PC then
+        keyBtn, key = getKeyBubble()
+    end
+    if btn or (keyBtn and key) then
         local headBefore = readHead()
         local t0 = os.clock()
-        clickSmart(btn)
+        if btn then
+            lastMode = "tap"
+            clickSmart(btn)
+        else
+            lastMode = "tecla"
+            pressSmart(key)
+        end
         lastClick = t0
         if mode.limit and headBefore ~= nil then
             awaiting = {head = headBefore, t = lastClick}
