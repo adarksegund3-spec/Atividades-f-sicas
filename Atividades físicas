@@ -1,12 +1,24 @@
+local function __AtividadesFisicasMain()
+if not game:IsLoaded() then game.Loaded:Wait() end
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
+while not player do
+    task.wait()
+    player = Players.LocalPlayer
+end
+
+-- plataforma: MOBILE (so toque), CONSOLE (so controle) ou PC (teclado/mouse, inclui notebook com tela touch)
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled and not UserInputService.MouseEnabled
+local IS_CONSOLE = UserInputService.GamepadEnabled and not UserInputService.TouchEnabled
+    and not UserInputService.KeyboardEnabled and not UserInputService.MouseEnabled
+local IS_PC = (not IS_MOBILE) and (not IS_CONSOLE)
 
 local MIN_DELAY = 0.6      -- valor mostrado: mínimo
 local DEFAULT_DELAY = 0.6  -- valor mostrado: padrão ao abrir
-local SPEED_OFFSET = 0.20  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
+local SPEED_OFFSET = 0.15  -- velocidade real = valor mostrado - 0.15 (0.6 mostrado = 0.45 real)
 local FULL_H = 196
 
 local NAVY_1     = Color3.fromRGB(6, 12, 32)
@@ -31,21 +43,30 @@ if env.__AtividadesFisicasStop then
     env.__AtividadesFisicasStop = nil
 end
 
-local function getParent()
-    local ok, g = pcall(function()
-        return (gethui and gethui()) or game:GetService("CoreGui")
-    end)
-    if ok and g then return g end
-    return player:WaitForChild("PlayerGui")
+-- ===================== ONDE COLOCAR A GUI (PC / MOBILE / CONSOLE) =====================
+-- Ordem de tentativa (padrao usado em scripts abertos): gethui -> CoreGui -> PlayerGui
+local function getContainers()
+    local list = {}
+    if gethui then
+        local ok, g = pcall(gethui)
+        if ok and g then table.insert(list, g) end
+    end
+    local ok2, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok2 and cg then table.insert(list, cg) end
+    local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+    if pg then table.insert(list, pg) end
+    return list
 end
 
-local parentGui = getParent()
-pcall(function()
-    for _, n in ipairs({"LarpJJsGui", "AtividadesFisicasGui"}) do
-        local old = parentGui:FindFirstChild(n)
-        if old then old:Destroy() end
-    end
-end)
+local containers = getContainers()
+for _, c in ipairs(containers) do
+    pcall(function()
+        for _, n in ipairs({"LarpJJsGui", "AtividadesFisicasGui"}) do
+            local old = c:FindFirstChild(n)
+            if old then old:Destroy() end
+        end
+    end)
+end
 
 local function make(class, props, parent)
     local obj = Instance.new(class)
@@ -76,11 +97,32 @@ local function grad(obj, colors, rot)
     return g
 end
 
-local gui = make("ScreenGui", {Name = "AtividadesFisicasGui", ResetOnSpawn = false}, nil)
+local gui = make("ScreenGui", {
+    Name = "AtividadesFisicasGui", ResetOnSpawn = false,
+    IgnoreGuiInset = true, DisplayOrder = 999,
+}, nil)
 pcall(function()
-    if syn and syn.protect_gui then syn.protect_gui(gui) end
+    if syn and syn.protect_gui then
+        syn.protect_gui(gui)
+    elseif protect_gui then
+        protect_gui(gui)
+    elseif protectgui then
+        protectgui(gui)
+    end
 end)
-gui.Parent = parentGui
+do
+    local placed = false
+    for _, c in ipairs(containers) do
+        local ok = pcall(function() gui.Parent = c end)
+        if ok and gui.Parent == c then
+            placed = true
+            break
+        end
+    end
+    if not placed then
+        error("nao consegui colocar a GUI na tela")
+    end
+end
 
 local frame = make("Frame", {
     Size = UDim2.new(0, 300, 0, FULL_H), Position = UDim2.new(0.5, -150, 0.5, -FULL_H / 2),
@@ -201,6 +243,7 @@ local shimmer = make("Frame", {
     BorderSizePixel = 0, ZIndex = 20, Active = false,
 }, frame)
 corner(shimmer, 12)
+pcall(function() shimmer.Interactable = false end)
 local shimmerGrad = Instance.new("UIGradient")
 shimmerGrad.Rotation = 20
 shimmerGrad.Transparency = NumberSequence.new({
@@ -219,9 +262,46 @@ local shimmerTween = TweenService:Create(
 )
 shimmerTween:Play()
 
--- ===================== ARRASTAR (PC / MOBILE) =====================
+-- ===================== ARRASTAR / TAMANHO (PC / MOBILE / CONSOLE) =====================
 
 local connections = {}
+local scale = make("UIScale", {Scale = 1}, frame)
+
+-- no PC a janela cresce um pouco em telas grandes; no mobile/console fica no tamanho original
+local function applyScale()
+    if not IS_PC then
+        scale.Scale = 1
+        return
+    end
+    local vp = gui.AbsoluteSize
+    if vp.Y > 0 then
+        scale.Scale = math.clamp(vp.Y / 800, 1, 1.35)
+    end
+end
+
+-- impede a janela de sair da tela
+local function clampFrame()
+    local vp = gui.AbsoluteSize
+    if vp.X <= 0 or vp.Y <= 0 then return end
+    local ap, sz = frame.AbsolutePosition, frame.AbsoluteSize
+    local dx, dy = 0, 0
+    if ap.X + sz.X > vp.X then dx = vp.X - (ap.X + sz.X) end
+    if ap.X + dx < 0 then dx = -ap.X end
+    if ap.Y + sz.Y > vp.Y then dy = vp.Y - (ap.Y + sz.Y) end
+    if ap.Y + dy < 0 then dy = -ap.Y end
+    if dx ~= 0 or dy ~= 0 then
+        local pos = frame.Position
+        frame.Position = UDim2.new(pos.X.Scale, pos.X.Offset + dx / scale.Scale,
+                                   pos.Y.Scale, pos.Y.Offset + dy / scale.Scale)
+    end
+end
+
+table.insert(connections, gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+    applyScale()
+    clampFrame()
+end))
+applyScale()
+
 do
     local dragging, dragStart, startPos
     table.insert(connections, top.InputBegan:Connect(function(input)
@@ -238,9 +318,10 @@ do
     table.insert(connections, UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
+            local d = (input.Position - dragStart) / scale.Scale
             frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
                                        startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            clampFrame()
         end
     end))
 end
@@ -342,14 +423,11 @@ local function getButton()
     return found
 end
 
--- ===================== CLIQUE (UM METODO SO) =====================
--- Dispara direto os eventos do botao (getconnections; se nao existir, firesignal).
--- NAO move mouse, NAO manda tecla, NAO manda toque: assim o jogo nao troca para "modo PC"
--- e a bolha continua aparecendo no mobile. Funciona igual no PC.
--- Mouse virtual so entra como ULTIMO recurso e SOMENTE em PC puro (sem touch).
-
-local IS_TOUCH = UserInputService.TouchEnabled
-local IS_PC = UserInputService.KeyboardEnabled and UserInputService.MouseEnabled and not IS_TOUCH
+-- ===================== CLIQUE =====================
+-- MOBILE: um metodo so (dispara os eventos do botao via getconnections/firesignal). Nao move
+-- mouse, nao manda tecla nem toque, entao o jogo nao troca pra "modo PC" e a bolha nao some.
+-- PC / CONSOLE: cadeia de metodos. Usa o que funciona e, se o contador da cabeca nao subir,
+-- passa pro proximo metodo (sem nunca disparar dois metodos no mesmo clique).
 
 local function fireEvents(btn)
     local fired = false
@@ -375,17 +453,52 @@ local function fireEvents(btn)
     return false
 end
 
+local function vimClick(btn)
+    local vim = game:GetService("VirtualInputManager")
+    local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+    vim:SendMouseMoveEvent(pos.X, pos.Y, game)
+    vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+    vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+end
+
+-- usado no mobile e pra pausar/fechar
 local function clickButton(btn)
     if fireEvents(btn) then return end
     if IS_PC then
-        pcall(function()
-            local vim = game:GetService("VirtualInputManager")
-            local inset = GuiService:GetGuiInset()
-            local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2 + inset
-            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
-            vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
-        end)
+        pcall(vimClick, btn)
     end
+end
+
+local chain = {
+    {"Eventos", function(btn) fireEvents(btn) end},
+    {"Mouse virtual", function(btn) vimClick(btn) end},
+    {"Mouse executor", function(btn)
+        if mouse1click and mousemoveabs then
+            local p = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+            mousemoveabs(p.X, p.Y)
+            mouse1click()
+        end
+    end},
+    {"VirtualUser", function(btn)
+        local vu = game:GetService("VirtualUser")
+        local p = btn.AbsolutePosition + btn.AbsoluteSize / 2 + GuiService:GetGuiInset()
+        vu:CaptureController()
+        vu:ClickButton1(Vector2.new(p.X, p.Y))
+    end},
+    {"Controle/Enter", function(btn)
+        local vim = game:GetService("VirtualInputManager")
+        local old = GuiService.SelectedObject
+        GuiService.SelectedObject = btn
+        vim:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
+        vim:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
+        vim:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+        vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+        GuiService.SelectedObject = old
+    end},
+}
+-- no console o metodo de controle vem logo depois dos eventos
+if IS_CONSOLE then
+    table.insert(chain, 2, table.remove(chain, #chain))
 end
 
 -- ===================== CONTADOR DA CABECA =====================
@@ -434,15 +547,44 @@ local function progress()
 end
 
 -- ===================== CLIQUE DO CICLO =====================
--- Sem esperas nem verificacoes: clica e pronto (e o mais rapido e leve possivel).
 
 local lastWorked = nil
 local lastClick = 0
 local awaiting = nil -- clique feito, esperando o contador da cabeca atualizar
+local chainIdx = 1
+local chainFails = 0
 
 local function clickSmart(btn)
-    clickButton(btn)
     count = count + 1
+
+    -- mobile: metodo unico, sem esperas
+    if IS_MOBILE then
+        clickButton(btn)
+        return
+    end
+
+    -- PC / console: usa o metodo atual da cadeia
+    local before = readHead()
+    pcall(chain[chainIdx][2], btn)
+    lastWorked = chainIdx
+    if before == nil then return end
+
+    -- confere se o contador subiu; se falhar 2 vezes seguidas, troca de metodo
+    local t = 0
+    while t < 0.4 do
+        task.wait(0.05)
+        t = t + 0.05
+        local now = readHead()
+        if now ~= nil and now ~= before then
+            chainFails = 0
+            return
+        end
+    end
+    chainFails = chainFails + 1
+    if chainFails >= 2 then
+        chainFails = 0
+        chainIdx = chainIdx % #chain + 1
+    end
 end
 
 -- usado pra pausar/fechar
@@ -602,8 +744,9 @@ local function cycle()
     local btn = getButton()
     if btn then
         local headBefore = readHead()
+        local t0 = os.clock()
         clickSmart(btn)
-        lastClick = os.clock()
+        lastClick = t0
         if mode.limit and headBefore ~= nil then
             awaiting = {head = headBefore, t = lastClick}
         end
@@ -632,3 +775,19 @@ task.spawn(function()
 end)
 
 refresh()
+
+end
+
+local __ok, __err = xpcall(__AtividadesFisicasMain, function(e)
+    return debug.traceback(tostring(e), 2)
+end)
+if not __ok then
+    warn("[Atividades fisicas] erro ao iniciar: " .. tostring(__err))
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Atividades físicas",
+            Text = "Erro ao iniciar. Veja o console (F9).",
+            Duration = 8,
+        })
+    end)
+end
